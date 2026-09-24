@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Track class attendance and see how many classes you can still skip.">
+  <meta name="theme-color" content="#f4f4f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1015" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SkipCount">
+  <title>SkipCount</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app" aria-live="polite"></main>
+
+  <!-- Add / edit subject -->
+  <dialog id="subject-dialog" class="sheet" aria-labelledby="subject-title">
+    <form id="subject-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="subject-title">New subject</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input name="name" maxlength="60" placeholder="e.g. Linear Algebra" autocomplete="off" autocapitalize="sentences">
+      </label>
+
+      <fieldset class="field">
+        <legend class="field-label">Color</legend>
+        <div class="swatches" id="swatches"></div>
+      </fieldset>
+
+      <label class="toggle-row">
+        <span>
+          <span class="toggle-title">Attendance is checked</span>
+          <span class="toggle-sub">Turn off for lectures — skips won't count</span>
+        </span>
+        <input type="checkbox" name="tracked" checked>
+        <span class="toggle" aria-hidden="true"></span>
+      </label>
+
+      <div id="limit-fields" class="limit-fields">
+      <fieldset class="field">
+        <legend class="field-label">Limit type</legend>
+        <div class="segmented">
+          <label><input type="radio" name="limitType" value="count" checked><span>Max skips</span></label>
+          <label><input type="radio" name="limitType" value="percent"><span>Min attendance %</span></label>
+        </div>
+      </fieldset>
+
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label" id="limit-label">Skips allowed</span>
+          <input name="limitValue" type="number" inputmode="numeric" min="0" max="999" placeholder="4">
+        </label>
+        <label class="field">
+          <span class="field-label">Excused allowed <em>optional</em></span>
+          <input name="excusedLimit" type="number" inputmode="numeric" min="0" max="999" placeholder="4">
+        </label>
+      </div>
+
+      <label class="field">
+        <span class="field-label">Classes this semester <em id="total-optional">optional</em></span>
+        <input name="total" type="number" inputmode="numeric" min="1" max="999" placeholder="16">
+      </label>
+      </div>
+
+      <p class="hint" id="subject-hint"></p>
+      <p class="error" id="subject-error" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn ghost danger" id="subject-delete" hidden>Delete subject</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Add / edit a single class record -->
+  <dialog id="record-dialog" class="sheet" aria-labelledby="record-title">
+    <form id="record-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="record-title">Log a class</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <label class="field" id="record-subject-field" hidden>
+        <span class="field-label">Subject</span>
+        <select name="subjectId"></select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Date</span>
+        <input name="date" type="date" required>
+      </label>
+
+      <fieldset class="field">
+        <legend class="field-label">Status</legend>
+        <div class="segmented three">
+          <label><input type="radio" name="status" value="present" checked><span>Attended</span></label>
+          <label><input type="radio" name="status" value="absent"><span>Skipped</span></label>
+          <label><input type="radio" name="status" value="excused"><span>Excused</span></label>
+        </div>
+      </fieldset>
+
+      <label class="field">
+        <span class="field-label">Note <em>optional</em></span>
+        <input name="note" maxlength="200" placeholder="e.g. sick note, lab moved" autocomplete="off">
+      </label>
+
+      <p class="hint">Excused absences (illness, official reason) use their own limit, separate from skips.</p>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn ghost danger" id="record-delete" hidden>Delete</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Timetable import preview -->
+  <dialog id="import-dialog" class="sheet" aria-labelledby="import-title">
+    <form id="import-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="import-title">Import timetable</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <p class="hint" id="import-summary"></p>
+
+      <fieldset class="field">
+        <legend class="field-label">Classes</legend>
+        <div class="segmented">
+          <label><input type="radio" name="range" value="future" checked><span>From today</span></label>
+          <label><input type="radio" name="range" value="all"><span>All dates</span></label>
+        </div>
+      </fieldset>
+
+      <div class="import-toolbar">
+        <span class="field-label">Subjects to track</span>
+        <span>
+          <button type="button" class="link-btn" data-select="all">All</button>
+          <button type="button" class="link-btn" data-select="none">None</button>
+        </span>
+      </div>
+      <div id="import-groups" class="import-groups"></div>
+
+      <p class="hint">Each code + class type becomes its own subject (e.g. lectures and exercises have separate limits). Lectures come in as "not checked" (their skips don't count). Exams are added to the calendar. Classes count as attended unless you mark a skip.</p>
+
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="#/" data-tab="home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span>
+    </a>
+    <a href="#/calendar" data-tab="calendar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+      <span>Calendar</span>
+    </a>
+    <a href="#/settings" data-tab="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+
+  <input type="file" id="import-input" accept="application/json,.json" hidden>
+  <input type="file" id="ics-input" accept=".ics,text/calendar" hidden>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
