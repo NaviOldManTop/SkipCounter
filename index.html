@@ -127,6 +127,101 @@
     </form>
   </dialog>
 
+  <!-- Add / edit a task (homework, things to bring…) -->
+  <dialog id="task-dialog" class="sheet" aria-labelledby="task-title">
+    <form id="task-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="task-title">New task</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <label class="field">
+        <span class="field-label">What to do</span>
+        <textarea name="text" rows="3" maxlength="500" placeholder="e.g. finish lab 3, read chapter 2, bring a laptop"></textarea>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Subject</span>
+        <select name="subjectId"></select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Due</span>
+        <select name="when"></select>
+      </label>
+
+      <label class="field" id="task-date-field" hidden>
+        <span class="field-label">Date</span>
+        <input name="due" type="date">
+      </label>
+
+      <label class="toggle-row">
+        <span>
+          <span class="toggle-title">Optional</span>
+          <span class="toggle-sub">Nice to do, not required</span>
+        </span>
+        <input type="checkbox" name="optional">
+        <span class="toggle" aria-hidden="true"></span>
+      </label>
+
+      <p class="error" id="task-error" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn ghost danger" id="task-delete" hidden>Delete</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Course rules: how the subject is graded -->
+  <dialog id="course-dialog" class="sheet" aria-labelledby="course-title">
+    <form id="course-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="course-title">Course rules</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <p class="hint">Copy the important bits from the course rules. Your own points are filled in on the subject page.</p>
+
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Points to pass</span>
+          <input name="passPoints" type="number" inputmode="decimal" step="0.5" min="0" placeholder="50">
+        </label>
+        <label class="field">
+          <span class="field-label">Bonus points <em>optional</em></span>
+          <input name="bonusMax" type="number" inputmode="decimal" step="0.5" min="0" placeholder="10">
+        </label>
+      </div>
+
+      <fieldset class="field">
+        <legend class="field-label">Tests, projects & other points</legend>
+        <div id="course-items" class="rows"></div>
+        <button type="button" class="btn ghost row-add" data-add="item">+ Add a test / project</button>
+      </fieldset>
+
+      <fieldset class="field">
+        <legend class="field-label">Grade scale <em>optional</em></legend>
+        <div id="course-scale" class="rows"></div>
+        <button type="button" class="btn ghost row-add" data-add="scale">+ Add a grade</button>
+      </fieldset>
+
+      <label class="field">
+        <span class="field-label">Notes</span>
+        <textarea name="notes" rows="5" maxlength="4000" placeholder="Retakes, deadlines, what counts for a pass, attendance rules…"></textarea>
+      </label>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn ghost danger" id="course-delete" hidden>Remove rules</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Timetable import preview -->
   <dialog id="import-dialog" class="sheet" aria-labelledby="import-title">
     <form id="import-form" method="dialog" novalidate>
@@ -165,6 +260,7 @@
   </dialog>
 
   <nav class="tabbar" aria-label="Main">
+    <span class="tab-indicator" aria-hidden="true"></span>
     <a href="#/" data-tab="home">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
       <span>Home</span>
@@ -181,6 +277,7 @@
 
   <input type="file" id="import-input" accept="application/json,.json" hidden>
   <input type="file" id="ics-input" accept=".ics,text/calendar" hidden>
+  <input type="file" id="course-input" accept="application/json,.json" hidden>
   <div id="toast" class="toast" role="status"></div>
 
   <script src="app.js" type="module"></script>

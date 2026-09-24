@@ -1,6 +1,6 @@
 // Offline support: serve from cache instantly, refresh the cache in the background.
 // Bump CACHE when the asset list changes.
-const CACHE = 'skipcount-v10';
+const CACHE = 'skipcount-v11';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const ASSETS = [
   './ics.js',
   './update.js',
   './motion.js',
+  './course.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',

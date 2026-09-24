@@ -1,10 +1,11 @@
 // SkipCount — attendance tracker. All data lives in localStorage on the device.
 import { parseICS, classifyEvent } from './ics.js';
 import { initUpdates } from './update.js';
-import { playEnter, fadeIn, initSwipeNav } from './motion.js';
+import { emptyCourse, normalizeCourse, courseStatus, itemDate, parseCourseImport, mergeScores } from './course.js';
+import { playEnter, fadeIn, initSwipeNav, closeSheet, initSheetGestures, slideIn, moveTabIndicator } from './motion.js';
 
 const STORAGE_KEY = 'skipcount:v1';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const COLORS = [
   '#5b5fef', '#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#1f9d63', '#84cc16', '#d99a00',
   '#f97316', '#e5484d', '#ec4899', '#c026d3', '#8b5cf6', '#a0703c', '#64748b',
@@ -38,6 +39,11 @@ const icons = {
   upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
   pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.3"/></svg>',
   clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  note: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8a2 2 0 0 1 2 2v14l-6-3-6 3V6a2 2 0 0 1 2-2z"/></svg>',
+  close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  down: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  up: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>',
+  book: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19"/></svg>',
 };
 const logo = '<svg class="logo" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="120" fill="var(--accent)"/><g fill="#fff" stroke="#fff" stroke-width="28" stroke-linejoin="round" stroke-linecap="round"><path d="M132 170v172l108-86z"/><path d="M240 170v172l108-86z"/><path d="M380 170v172" stroke-width="34"/></g></svg>';
 
@@ -80,7 +86,7 @@ const weekday = (ms) => new Date(ms).toLocaleDateString('en-GB', { weekday: 'sho
 // ---------- state ----------
 
 function emptyState() {
-  return { version: 1, subjects: [], records: [], events: [], settings: { theme: 'auto' } };
+  return { version: 1, subjects: [], records: [], events: [], tasks: [], settings: { theme: 'auto' } };
 }
 
 const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -105,6 +111,7 @@ function normalize(data) {
         tracked: s.tracked !== false,
         code: text(s.code, 12),
         icsKey: text(s.icsKey, 80),
+        course: normalizeCourse(s.course),
         createdAt: Number(s.createdAt) || Date.now(),
       };
     });
@@ -135,8 +142,21 @@ function normalize(data) {
       end: e.end,
       date: toISO(new Date(e.start)),
     }));
+  // To-dos for a class (homework, things to bring…), or for a subject with an optional date.
+  const tasks = (Array.isArray(data.tasks) ? data.tasks : [])
+    .filter((t) => t && ids.has(String(t.subjectId)) && typeof t.text === 'string' && t.text.trim())
+    .map((t) => ({
+      id: String(t.id || uid()),
+      subjectId: String(t.subjectId),
+      eventUid: t.eventUid ? String(t.eventUid) : null,
+      due: /^\d{4}-\d{2}-\d{2}$/.test(t.due) ? t.due : null,
+      text: t.text.trim().slice(0, 500),
+      optional: !!t.optional,
+      done: !!t.done,
+      createdAt: Number(t.createdAt) || Date.now(),
+    }));
   const theme = ['auto', 'light', 'dark'].includes(data.settings?.theme) ? data.settings.theme : 'auto';
-  return { version: 1, subjects, records, events, settings: { theme } };
+  return { version: 1, subjects, records, events, tasks, settings: { theme } };
 }
 
 function load() {
@@ -264,6 +284,48 @@ function weeklySlots(subjectId) {
 
 const upcomingEvents = (filter) => state.events.filter((e) => e.end > Date.now() && filter(e)).sort((a, b) => a.start - b.start);
 
+// ---------- course rules & tasks ----------
+
+// Dates of a subject's classes in order, so "10th class" can be turned into a date.
+const classDates = (subjectId) => state.events
+  .filter((e) => e.subjectId === subjectId)
+  .sort((a, b) => a.start - b.start)
+  .map((e) => e.date);
+
+// Tests / projects that fall on a given date, e.g. to tag that day's class.
+function assessmentsOn(iso) {
+  const out = [];
+  for (const s of state.subjects) {
+    if (!s.course) continue;
+    const dates = classDates(s.id);
+    for (const it of s.course.items) if (itemDate(it, dates) === iso) out.push({ subject: s, item: it });
+  }
+  return out;
+}
+
+function upcomingAssessments() {
+  const today = todayISO();
+  return state.subjects.flatMap((s) => {
+    if (!s.course) return [];
+    const dates = classDates(s.id);
+    return s.course.items
+      .map((it) => ({ subject: s, item: it, date: itemDate(it, dates) }))
+      .filter((x) => x.date && x.date >= today);
+  });
+}
+
+const eventByUid = (uid) => state.events.find((e) => e.uid === uid);
+
+// When a task is due: its class (date + time) or its own date.
+function taskDue(task) {
+  const ev = task.eventUid ? eventByUid(task.eventUid) : null;
+  if (ev) return { date: ev.date, sort: ev.start, label: `${formatDate(ev.date)}, ${hm(ev.start)}` };
+  if (task.due) return { date: task.due, sort: new Date(task.due).getTime(), label: formatDate(task.due) };
+  return { date: null, sort: Infinity, label: 'No date' };
+}
+
+const sortedTasks = (list) => [...list].sort((a, b) => taskDue(a).sort - taskDue(b).sort || a.createdAt - b.createdAt);
+
 // ---------- rendering ----------
 
 function pipsOrBar(used, allowed) {
@@ -336,16 +398,26 @@ function entryRow({ ev, rec }, marker = '') {
 
   let right = '';
   let auto = '';
+  // "+ task" for any timetable class of a subject.
+  const taskBtn = ev && subject
+    ? `<button class="mini task" data-action="add-task" data-id="${esc(subject.id)}" data-event="${esc(ev.uid)}" aria-label="Add a task for this class">${icons.note}</button>`
+    : '';
   if (ev?.exam) {
     right = '<span class="chip exam">Exam</span>';
   } else if (rec) {
-    right = `<button class="chip status-${rec.status}" data-action="edit-record" data-id="${esc(rec.id)}">${STATUS[rec.status].label}</button>`;
+    right = `<div class="mini-group">${taskBtn}<button class="chip status-${rec.status}" data-action="edit-record" data-id="${esc(rec.id)}">${STATUS[rec.status].label}</button></div>`;
   } else if (subject) {
     // Unmarked = attended by default, so only skip / excused need a tap (also ahead of time).
     const btn = (status, icon, label) => `<button class="mini ${status}" data-action="log" data-id="${esc(subject.id)}" data-status="${status}" data-event="${esc(ev.uid)}" data-date="${ev.date}" aria-label="${label}">${icon}</button>`;
-    right = `<div class="mini-group">${btn('absent', icons.skip, 'Mark skipped')}${subject.tracked ? btn('excused', icons.shield, 'Mark excused') : ''}</div>`;
+    right = `<div class="mini-group">${taskBtn}${btn('absent', icons.skip, 'Mark skipped')}${subject.tracked ? btn('excused', icons.shield, 'Mark excused') : ''}</div>`;
     if (subject.tracked && isAutoAttended({ ev, rec })) auto = `<span class="entry-auto">${icons.check}Attended</span>`;
   }
+
+  const tags = ev && subject
+    ? assessmentsOn(ev.date).filter((a) => a.subject.id === subject.id)
+      .map((a) => `<span class="entry-tag">${esc(a.item.title)}${a.item.max != null ? ` · ${a.item.max} pts` : ''}</span>`).join('')
+    : '';
+  const tasks = ev ? sortedTasks(state.tasks.filter((t) => t.eventUid === ev.uid)) : [];
 
   let hint = '';
   if (subject && !subject.tracked) {
@@ -357,12 +429,34 @@ function entryRow({ ev, rec }, marker = '') {
   const color = ev?.exam ? 'var(--accent)' : subject?.color ?? 'var(--muted)';
   return `
     <li class="entry ${marker ? `is-${marker}` : ''} ${rec ? 'is-logged' : ''} ${rec && rec.id === flash?.recordId ? 'just-logged' : ''} ${subject && !subject.tracked ? 'is-free' : ''}" style="--c:${color}">
-      ${time}
-      <div class="entry-body">
-        <div class="entry-title">${marker ? `<span class="entry-marker">${marker === 'now' ? 'Now' : 'Next'}</span>` : ''}<span>${title}</span></div>
-        <div class="entry-meta">${[auto, details, hint].filter(Boolean).join('<span class="sep">·</span>')}</div>
+      <div class="entry-row">
+        ${time}
+        <div class="entry-body">
+          <div class="entry-title">${marker ? `<span class="entry-marker">${marker === 'now' ? 'Now' : 'Next'}</span>` : ''}<span class="entry-name">${title}</span>${tags}</div>
+          <div class="entry-meta">${[auto, details, hint].filter(Boolean).join('<span class="sep">·</span>')}</div>
+        </div>
+        ${right}
       </div>
-      ${right}
+      ${tasks.length ? `<ul class="task-lines">${tasks.map(taskLine).join('')}</ul>` : ''}
+    </li>`;
+}
+
+// A to-do with a tick box; `meta` adds the subject and due date (for lists outside a class row).
+function taskLine(task, meta = false) {
+  let info = '';
+  if (meta) {
+    const subject = getSubject(task.subjectId);
+    const due = taskDue(task);
+    const late = !task.done && due.date && due.date < todayISO();
+    info = `<span class="task-meta"><span class="dot" style="--c:${subject?.color ?? 'var(--muted)'}"></span>${esc(subject?.name ?? '')}<span class="sep">·</span><span class="${late ? 'late' : ''}">${esc(due.label)}</span></span>`;
+  }
+  return `
+    <li class="task-line ${task.done ? 'is-done' : ''} ${task.id === flash?.taskId ? 'just-logged' : ''}">
+      <button class="task-check" data-action="toggle-task" data-id="${esc(task.id)}" aria-label="${task.done ? 'Mark as not done' : 'Mark as done'}">${task.done ? icons.check : ''}</button>
+      <button class="task-text" data-action="edit-task" data-id="${esc(task.id)}">
+        <span>${esc(task.text)}${task.optional ? '<em class="task-optional">optional</em>' : ''}</span>
+        ${info}
+      </button>
     </li>`;
 }
 
@@ -499,24 +593,62 @@ function semesterBar() {
     </div>`;
 }
 
+// Open to-dos across all subjects, soonest first.
+const home = { showAllTasks: false };
+
+function todoCard() {
+  const open = sortedTasks(state.tasks.filter((t) => !t.done));
+  if (!open.length) return '';
+  const shown = home.showAllTasks ? open : open.slice(0, 5);
+  return `
+    <section>
+      <h2 class="section-title">To do <span class="title-note">· ${open.length}</span></h2>
+      <ul class="task-card">${shown.map((t) => taskLine(t, true)).join('')}</ul>
+      ${open.length > 5 ? `<button class="btn ghost add-more" data-action="toggle-all-tasks">${home.showAllTasks ? 'Show less' : `Show all ${open.length}`}</button>` : ''}
+    </section>`;
+}
+
+// Exams from the timetable plus tests/projects from the subjects' course rules.
 function examsCard() {
-  const exams = upcomingEvents((e) => e.exam).slice(0, 3);
-  if (!exams.length) return '';
-  const inDays = (ev) => {
-    const days = Math.round((new Date(ev.date) - new Date(todayISO())) / DAY_MS);
+  const today = todayISO();
+  const fromTimetable = upcomingEvents((e) => e.exam).map((ev) => ({
+    date: ev.date,
+    sort: ev.start,
+    time: hm(ev.start),
+    title: `${ev.code} exam`,
+    meta: [ev.room && `${icons.pin}${esc(ev.room)}`, esc(ev.teacher)],
+    href: null,
+  }));
+  const fromRules = upcomingAssessments().map(({ subject, item, date }) => {
+    const cls = item.classNo ? state.events.filter((e) => e.subjectId === subject.id).sort((a, b) => a.start - b.start)[item.classNo - 1] : null;
+    return {
+      date,
+      sort: cls ? cls.start : new Date(date).getTime() + DAY_MS - 1,
+      time: cls ? hm(cls.start) : '',
+      title: `${subject.name} · ${item.title}`,
+      meta: [item.max != null && `${item.max} pts${item.min != null ? ` (min ${item.min})` : ''}`, cls?.room && `${icons.pin}${esc(cls.room)}`],
+      href: `#/s/${encodeURIComponent(subject.id)}`,
+    };
+  });
+  const list = [...fromTimetable, ...fromRules].filter((x) => x.date >= today).sort((a, b) => a.sort - b.sort).slice(0, 4);
+  if (!list.length) return '';
+  const inDays = (date) => {
+    const days = Math.round((new Date(date) - new Date(today)) / DAY_MS);
     return days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
   };
   return `
     <section class="exams">
-      <h2 class="section-title">Upcoming exams</h2>
+      <h2 class="section-title">Tests & exams</h2>
       <ul class="exam-list">
-        ${exams.map((ev) => `
-          <li class="exam-item">
-            <span class="exam-when"><b>${inDays(ev)}</b><small>${esc(formatDate(ev.date))}, ${hm(ev.start)}</small></span>
-            <span class="exam-body">
-              <span class="exam-title">${esc(ev.code)} exam</span>
-              <span class="exam-meta">${[ev.room && `${icons.pin}${esc(ev.room)}`, esc(ev.teacher)].filter(Boolean).join('<span class="sep">·</span>')}</span>
-            </span>
+        ${list.map((x) => `
+          <li>
+            <${x.href ? `a href="${x.href}"` : 'div'} class="exam-item">
+              <span class="exam-when"><b>${inDays(x.date)}</b><small>${esc(formatDate(x.date))}${x.time ? `, ${x.time}` : ''}</small></span>
+              <span class="exam-body">
+                <span class="exam-title">${esc(x.title)}</span>
+                <span class="exam-meta">${x.meta.filter(Boolean).join('<span class="sep">·</span>')}</span>
+              </span>
+            </${x.href ? 'a' : 'div'}>
           </li>`).join('')}
       </ul>
     </section>`;
@@ -626,11 +758,90 @@ function viewHome() {
     </section>
     ${todayWidget()}
     ${examsCard()}
+    ${todoCard()}
     ${tracked.length ? `<h2 class="section-title">Subjects</h2>
     <section class="list">${tracked.map(subjectCard).join('')}</section>` : ''}
     ${free.length ? `<h2 class="section-title">Not checked <span class="title-note">· skips don't count</span></h2>
     <ul class="free-list">${free.map(freeRow).join('')}</ul>` : ''}
     <button class="btn ghost add-more" data-action="add-subject">${icons.plus}Add subject</button>`;
+}
+
+// Course rules card: points so far, what's needed to pass, assessments with dates, grade scale, notes.
+const openScales = new Set(); // subjects whose grade table is expanded
+
+function courseInfo(subject) {
+  const c = subject.course;
+  const id = esc(subject.id);
+  if (!c) {
+    return `
+      <section>
+        <h2 class="section-title">Course rules</h2>
+        <button class="course-empty" data-action="edit-course" data-id="${id}">
+          ${icons.book}
+          <span><b>Add how this course is graded</b><small>Tests, points to pass, grade scale, notes — so you don't have to open the PDF.</small></span>
+        </button>
+      </section>`;
+  }
+  const s = courseStatus(c, classDates(subject.id));
+  let headline = '';
+  if (c.passPoints != null || s.max) {
+    const of = c.passPoints != null ? `pass at ${c.passPoints}` : `of ${s.max}`;
+    const state = !s.scored ? 'Nothing scored yet'
+      : s.belowMin.length ? `Below the minimum in ${s.belowMin.map((it) => it.title).join(', ')}`
+      : s.passed ? `Passing${s.grade ? ` · grade ${s.grade}` : ''}`
+      : s.needed ? `${s.needed} more to pass${s.grade ? ` · now ${s.grade}` : ''}` : '';
+    headline = `
+      <div class="course-head ${s.passed ? 'is-ok' : s.belowMin.length ? 'is-bad' : ''}">
+        <span class="course-total"><b>${s.total}</b>${s.max ? ` / ${s.max}` : ''} pts</span>
+        <span class="course-state">${esc(state)}<small>${esc(of)}${c.bonusMax ? ` · up to +${c.bonusMax} bonus` : ''}</small></span>
+      </div>
+      ${c.passPoints ? `<div class="term-bar course-bar"><span style="width:${Math.min(100, (s.total / (s.max || c.passPoints)) * 100)}%"></span><i style="left:${Math.min(100, (c.passPoints / (s.max || c.passPoints)) * 100)}%"></i></div>` : ''}`;
+  }
+  const items = s.items.map((it) => {
+    const when = it.when ? `${it.classNo ? `Class ${it.classNo} · ` : ''}${formatDate(it.when)}` : it.classNo ? `Class ${it.classNo}` : '';
+    const low = it.min != null && it.score != null && it.score < it.min;
+    return `
+      <li class="course-item">
+        <div class="course-item-main">
+          <span class="course-item-title">${esc(it.title)}</span>
+          <span class="course-item-meta">${[when && esc(when), it.min != null && `min ${it.min}`].filter(Boolean).join('<span class="sep">·</span>')}</span>
+          ${it.note ? `<span class="course-item-note">${esc(it.note)}</span>` : ''}
+        </div>
+        <label class="score ${low ? 'is-low' : ''}">
+          <input type="number" inputmode="decimal" step="0.5" min="0" value="${it.score ?? ''}" placeholder="–" data-score="${esc(it.id)}" data-subject="${id}" aria-label="Your points for ${esc(it.title)}">
+          ${it.max != null ? `<span>/ ${it.max}</span>` : ''}
+        </label>
+      </li>`;
+  }).join('');
+  const scaleOpen = openScales.has(subject.id);
+  const scale = c.scale.length ? `
+    <button class="course-scale-toggle" data-action="toggle-scale" data-id="${id}">Grade scale ${scaleOpen ? icons.up : icons.down}</button>
+    ${scaleOpen ? `<table class="course-scale"><tbody>${c.scale.map((b, i) => `
+      <tr class="${s.scored && s.grade === b.grade ? 'is-now' : ''}"><td>${b.from}${c.scale[i + 1] ? `–${c.scale[i + 1].from}` : '+'} pts</td><td>${esc(b.grade)}</td></tr>`).join('')}
+    </tbody></table>` : ''}` : '';
+  return `
+    <section>
+      <h2 class="section-title section-with-action">Course rules <button class="link-btn" data-action="edit-course" data-id="${id}">Edit</button></h2>
+      <div class="course">
+        ${headline}
+        ${items ? `<ul class="course-items">${items}</ul>` : ''}
+        ${scale}
+        ${c.notes ? `<p class="course-notes">${esc(c.notes)}</p>` : ''}
+      </div>
+    </section>`;
+}
+
+function subjectTasks(subject) {
+  const list = sortedTasks(state.tasks.filter((t) => t.subjectId === subject.id));
+  const open = list.filter((t) => !t.done);
+  const done = list.filter((t) => t.done);
+  return `
+    <section>
+      <h2 class="section-title section-with-action">Tasks <button class="link-btn" data-action="add-task" data-id="${esc(subject.id)}">${icons.plus}Add</button></h2>
+      ${open.length || done.length
+        ? `<ul class="task-card">${[...open, ...done.slice(0, 5)].map((t) => taskLine(t, true)).join('')}</ul>`
+        : '<p class="day-empty">Homework, things to bring, optional stuff — add it here or with the bookmark button on a class.</p>'}
+    </section>`;
 }
 
 function scheduleInfo(subject) {
@@ -727,6 +938,10 @@ function viewSubject(subject) {
     </section>
     <p class="limit-line">${icons.shield}${esc(limitText(subject, st))}</p>
 
+    ${courseInfo(subject)}
+
+    ${subjectTasks(subject)}
+
     ${scheduleInfo(subject)}
 
     <section class="log-today">
@@ -766,6 +981,15 @@ function viewSettings() {
       <h2 class="section-title">Appearance</h2>
       <div class="segmented three">${opt('auto', 'Auto')}${opt('light', 'Light')}${opt('dark', 'Dark')}</div>
     </section>
+
+    ${state.subjects.length ? `
+    <section class="panel">
+      <h2 class="section-title">Course rules</h2>
+      <p class="panel-text">Add rules by hand on each subject page, or import a prepared course-rules file (.json) to fill several subjects at once. Your points are kept.</p>
+      <div class="panel-buttons">
+        <button class="btn soft" data-action="import-course">${icons.book}Import course rules</button>
+      </div>
+    </section>` : ''}
 
     <section class="panel">
       <h2 class="section-title">Backup</h2>
@@ -882,7 +1106,7 @@ function viewCalendar() {
         <button class="icon-btn" data-action="cal-month" data-delta="1" aria-label="Next month">${icons.next}</button>
       </div>
       <div class="cal-grid cal-weekdays">${['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((w) => `<span>${w}</span>`).join('')}</div>
-      <div class="cal-grid">${cells}</div>
+      <div class="cal-grid cal-days">${cells}</div>
       <div class="cal-summary">
         ${summaryItem(counts.present, 'attended', 'status-present')}
         ${summaryItem(counts.absent, 'skipped', 'status-absent')}
@@ -922,6 +1146,7 @@ function render() {
     app.innerHTML = viewHome();
   }
   document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  moveTabIndicator();
 }
 
 // ---------- toast ----------
@@ -1082,7 +1307,7 @@ subjectForm.addEventListener('submit', (e) => {
     state.subjects.push({ id: uid(), createdAt: Date.now(), ...data });
   }
   save();
-  subjectDialog.close();
+  closeSheet(subjectDialog);
   render();
 });
 
@@ -1093,8 +1318,9 @@ $('#subject-delete').addEventListener('click', () => {
   state.subjects = state.subjects.filter((s) => s.id !== subject.id);
   state.records = state.records.filter((r) => r.subjectId !== subject.id);
   state.events = state.events.filter((e) => e.subjectId !== subject.id);
+  state.tasks = state.tasks.filter((t) => t.subjectId !== subject.id);
   save();
-  subjectDialog.close();
+  closeSheet(subjectDialog);
   location.hash = '#/';
   render();
 });
@@ -1138,10 +1364,10 @@ recordForm.addEventListener('submit', (e) => {
       Object.assign(rec, { date, status, note });
     }
     save();
-    recordDialog.close();
+    closeSheet(recordDialog);
     render();
   } else {
-    recordDialog.close();
+    closeSheet(recordDialog);
     logClass(editingRecord.subjectId || f.subjectId.value, status, date, note);
   }
 });
@@ -1151,7 +1377,7 @@ $('#record-delete').addEventListener('click', () => {
   if (!rec) return;
   state.records = state.records.filter((r) => r.id !== rec.id);
   save();
-  recordDialog.close();
+  closeSheet(recordDialog);
   render();
   toast('Class deleted', () => {
     state.records.push(rec);
@@ -1281,7 +1507,7 @@ importForm.addEventListener('submit', (e) => {
   for (const ev of events.filter((x) => x.exam)) state.events.push(storedEvent(ev, null));
 
   save();
-  importDialog.close();
+  closeSheet(importDialog);
   location.hash = '#/';
   render();
   toast(`Imported ${events.length} classes${created ? ` · ${created} new ${plural(created, 'subject', 'subjects')}` : ''}`);
@@ -1305,12 +1531,250 @@ $('#ics-input').addEventListener('change', async (e) => {
   }
 });
 
-// Close dialogs via ✕ or a tap on the backdrop
-for (const dialog of [subjectDialog, recordDialog, importDialog]) {
-  dialog.addEventListener('click', (e) => {
-    if (e.target === dialog || e.target.closest('[data-close]')) dialog.close();
-  });
+// Tasks
+
+const taskDialog = $('#task-dialog');
+const taskForm = $('#task-form');
+let editingTask = null; // task id when editing
+
+// "Due" choices: the subject's upcoming classes, a custom date, or nothing.
+function fillTaskWhen(subjectId, selected) {
+  const f = taskForm.elements;
+  const classes = upcomingEvents((e) => e.subjectId === subjectId).slice(0, 12);
+  const current = selected?.startsWith('ev:') ? eventByUid(selected.slice(3)) : null;
+  if (current && !classes.includes(current)) classes.unshift(current);
+  f.when.innerHTML = [
+    ...classes.map((ev) => `<option value="ev:${esc(ev.uid)}">${esc(formatDate(ev.date))}, ${hm(ev.start)}${ev.room ? ` · ${esc(ev.room)}` : ''}</option>`),
+    '<option value="date">On a date…</option>',
+    '<option value="none">No due date</option>',
+  ].join('');
+  f.when.value = selected && [...f.when.options].some((o) => o.value === selected) ? selected : f.when.options[0].value;
+  $('#task-date-field').hidden = f.when.value !== 'date';
 }
+
+function openTaskDialog({ task, subjectId, eventUid }) {
+  editingTask = task?.id ?? null;
+  taskForm.reset();
+  const f = taskForm.elements;
+  $('#task-title').textContent = task ? 'Edit task' : 'New task';
+  $('#task-delete').hidden = !task;
+  $('#task-error').hidden = true;
+  const sid = task?.subjectId ?? subjectId ?? state.subjects[0]?.id;
+  f.subjectId.innerHTML = state.subjects.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  f.subjectId.value = sid;
+  const ev = task?.eventUid ?? eventUid;
+  fillTaskWhen(sid, ev ? `ev:${ev}` : task?.due ? 'date' : task ? 'none' : null);
+  f.due.value = task?.due ?? todayISO();
+  f.text.value = task?.text ?? '';
+  f.optional.checked = !!task?.optional;
+  taskDialog.showModal();
+  if (!task) setTimeout(() => f.text.focus(), 50);
+}
+
+taskForm.addEventListener('change', (e) => {
+  if (e.target.name === 'subjectId') fillTaskWhen(e.target.value, null);
+  if (e.target.name === 'when') $('#task-date-field').hidden = e.target.value !== 'date';
+});
+
+taskForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = taskForm.elements;
+  const text = f.text.value.trim().slice(0, 500);
+  if (!text) {
+    $('#task-error').textContent = 'Write what needs to be done.';
+    $('#task-error').hidden = false;
+    return;
+  }
+  const when = f.when.value;
+  const ev = when.startsWith('ev:') ? eventByUid(when.slice(3)) : null;
+  const data = {
+    subjectId: f.subjectId.value,
+    eventUid: ev?.uid ?? null,
+    // Keep the class date too, so the task still has a date if the timetable is removed.
+    due: ev ? ev.date : when === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(f.due.value) ? f.due.value : null,
+    text,
+    optional: f.optional.checked,
+  };
+  let task = state.tasks.find((t) => t.id === editingTask);
+  if (task) Object.assign(task, data);
+  else {
+    task = { id: uid(), done: false, createdAt: Date.now(), ...data };
+    state.tasks.push(task);
+  }
+  save();
+  closeSheet(taskDialog);
+  flash = { taskId: task.id };
+  render();
+  flash = null;
+});
+
+$('#task-delete').addEventListener('click', () => {
+  const task = state.tasks.find((t) => t.id === editingTask);
+  if (!task) return;
+  state.tasks = state.tasks.filter((t) => t.id !== task.id);
+  save();
+  closeSheet(taskDialog);
+  render();
+  toast('Task deleted', () => {
+    state.tasks.push(task);
+    save();
+    render();
+  });
+});
+
+function toggleTask(id) {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  task.done = !task.done;
+  save();
+  flash = { taskId: task.id };
+  render();
+  flash = null;
+  if (task.done) {
+    toast('Done ✓', () => {
+      task.done = false;
+      save();
+      render();
+    });
+  }
+}
+
+// Course rules
+
+const courseDialog = $('#course-dialog');
+const courseForm = $('#course-form');
+let editingCourseFor = null; // subject id
+
+const rowItem = (it = {}) => `
+  <div class="rule-row" data-kind="item" data-id="${esc(it.id ?? '')}">
+    <input class="rule-title" name="title" maxlength="60" placeholder="e.g. Test, Project, Colloquium" value="${esc(it.title ?? '')}" aria-label="Name">
+    <div class="rule-nums">
+      <label><span>Max pts</span><input name="max" type="number" inputmode="decimal" step="0.5" min="0" value="${it.max ?? ''}"></label>
+      <label><span>Min pts</span><input name="min" type="number" inputmode="decimal" step="0.5" min="0" value="${it.min ?? ''}"></label>
+      <label><span>Class #</span><input name="classNo" type="number" inputmode="numeric" min="1" max="99" value="${it.classNo ?? ''}"></label>
+      <label><span>or date</span><input name="date" type="date" value="${it.date ?? ''}"></label>
+    </div>
+    <input class="rule-note" name="note" maxlength="300" placeholder="Note (e.g. retake in class 13)" value="${esc(it.note ?? '')}" aria-label="Note">
+    <button type="button" class="rule-remove" data-remove aria-label="Remove">${icons.close}</button>
+  </div>`;
+
+const rowScale = (b = {}) => `
+  <div class="rule-row scale" data-kind="scale">
+    <label><span>From pts</span><input name="from" type="number" inputmode="decimal" step="0.5" min="0" value="${b.from ?? ''}"></label>
+    <label><span>Grade</span><input name="grade" maxlength="12" value="${esc(b.grade ?? '')}" placeholder="3.0"></label>
+    <button type="button" class="rule-remove" data-remove aria-label="Remove">${icons.close}</button>
+  </div>`;
+
+function openCourseDialog(subject) {
+  editingCourseFor = subject.id;
+  const c = subject.course;
+  courseForm.reset();
+  const f = courseForm.elements;
+  $('#course-title').textContent = `${subject.name} · rules`;
+  f.passPoints.value = c?.passPoints ?? '';
+  f.bonusMax.value = c?.bonusMax ?? '';
+  f.notes.value = c?.notes ?? '';
+  $('#course-items').innerHTML = (c?.items.length ? c.items : [{}]).map(rowItem).join('');
+  $('#course-scale').innerHTML = (c?.scale ?? []).map(rowScale).join('');
+  $('#course-delete').hidden = !c;
+  courseDialog.showModal();
+}
+
+courseForm.addEventListener('click', (e) => {
+  const add = e.target.closest('[data-add]');
+  if (add) {
+    const box = add.dataset.add === 'item' ? $('#course-items') : $('#course-scale');
+    box.insertAdjacentHTML('beforeend', add.dataset.add === 'item' ? rowItem() : rowScale());
+    box.lastElementChild.querySelector('input').focus();
+  }
+  const remove = e.target.closest('[data-remove]');
+  if (remove) remove.closest('.rule-row').remove();
+});
+
+courseForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const subject = getSubject(editingCourseFor);
+  if (!subject) return;
+  const f = courseForm.elements;
+  const val = (row, name) => row.querySelector(`[name="${name}"]`).value;
+  const prevScores = new Map((subject.course?.items ?? []).map((it) => [it.id, it.score]));
+  const items = [...courseForm.querySelectorAll('.rule-row[data-kind="item"]')].map((row) => ({
+    id: row.dataset.id || undefined,
+    title: val(row, 'title'),
+    max: val(row, 'max'),
+    min: val(row, 'min'),
+    classNo: val(row, 'classNo'),
+    date: val(row, 'date'),
+    note: val(row, 'note'),
+    score: prevScores.get(row.dataset.id) ?? null,
+  }));
+  const scale = [...courseForm.querySelectorAll('.rule-row[data-kind="scale"]')].map((row) => ({ from: val(row, 'from'), grade: val(row, 'grade') }));
+  subject.course = normalizeCourse({ ...emptyCourse(), passPoints: f.passPoints.value, bonusMax: f.bonusMax.value, notes: f.notes.value, items, scale });
+  save();
+  closeSheet(courseDialog);
+  render();
+});
+
+$('#course-delete').addEventListener('click', () => {
+  const subject = getSubject(editingCourseFor);
+  if (!subject || !confirm('Remove the course rules and your points for this subject?')) return;
+  subject.course = null;
+  save();
+  closeSheet(courseDialog);
+  render();
+});
+
+// Points typed on the subject page.
+document.addEventListener('change', (e) => {
+  const input = e.target.closest('input[data-score]');
+  if (!input) return;
+  const subject = getSubject(input.dataset.subject);
+  const item = subject?.course?.items.find((it) => it.id === input.dataset.score);
+  if (!item) return;
+  const v = input.value.trim();
+  const n = Number(v.replace(',', '.'));
+  item.score = v === '' || !Number.isFinite(n) ? null : Math.max(0, Math.round(n * 10) / 10);
+  save();
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+});
+
+// Rules prepared from the course PDFs: { "skipcount": "course-info", "courses": [...] }
+$('#course-input').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const courses = parseCourseImport(JSON.parse(await file.text()));
+    let updated = 0;
+    const missing = [];
+    for (const c of courses) {
+      const sameCode = state.subjects.filter((s) => (s.code || s.name).toUpperCase() === c.code || s.name.toUpperCase().startsWith(`${c.code} `));
+      let targets = c.type ? sameCode.filter((s) => s.name.toLowerCase().includes(c.type.toLowerCase())) : sameCode.filter((s) => s.tracked);
+      if (!c.type && !targets.length) targets = sameCode;
+      if (!targets.length) missing.push(c.type ? `${c.code} ${c.type}` : c.code);
+      for (const s of targets) {
+        s.course = mergeScores(c.course, s.course);
+        updated++;
+      }
+    }
+    save();
+    render();
+    toast(`Course rules: ${updated} updated${missing.length ? ` · not found: ${missing.join(', ')}` : ''}`);
+  } catch (err) {
+    toast(err instanceof SyntaxError ? 'This file is not valid JSON' : err.message);
+  }
+});
+
+// Close dialogs via ✕ or a tap on the backdrop
+for (const dialog of [subjectDialog, recordDialog, importDialog, taskDialog, courseDialog]) {
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog || e.target.closest('[data-close]')) closeSheet(dialog);
+  });
+  initSheetGestures(dialog);
+}
+window.addEventListener('resize', () => moveTabIndicator(true));
 
 // Backup
 
@@ -1381,6 +1845,30 @@ document.addEventListener('click', (e) => {
     case 'import-ics':
       $('#ics-input').click();
       break;
+    case 'add-task':
+      if (state.subjects.length) openTaskDialog({ subjectId: id, eventUid: el.dataset.event });
+      break;
+    case 'edit-task':
+      openTaskDialog({ task: state.tasks.find((t) => t.id === id) });
+      break;
+    case 'toggle-task':
+      toggleTask(id);
+      break;
+    case 'toggle-all-tasks':
+      home.showAllTasks = !home.showAllTasks;
+      render();
+      break;
+    case 'edit-course':
+      openCourseDialog(getSubject(id));
+      break;
+    case 'toggle-scale':
+      if (openScales.has(id)) openScales.delete(id);
+      else openScales.add(id);
+      render();
+      break;
+    case 'import-course':
+      $('#course-input').click();
+      break;
     case 'clear-schedule':
       if (confirm('Remove the imported timetable? Subjects and logged classes stay.')) {
         state.events = [];
@@ -1415,6 +1903,7 @@ document.addEventListener('click', (e) => {
     case 'cal-month':
       cal.month = shiftMonth(cal.month, Number(el.dataset.delta));
       render();
+      slideIn($('.cal-days'), Number(el.dataset.delta));
       break;
     case 'cal-today':
       cal.day = todayISO();
@@ -1477,6 +1966,8 @@ window.addEventListener('hashchange', () => {
   subjectDialog.close();
   recordDialog.close();
   importDialog.close();
+  taskDialog.close();
+  courseDialog.close();
   render();
   window.scrollTo(0, 0);
   playEnter($('#app'), lastHash, location.hash);

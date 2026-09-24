@@ -41,13 +41,47 @@ All paths are relative, so it works under the `/SkipCount/` subpath. Netlify or 
 
 Push changes and the app picks them up on its next launch (the service worker serves the cached version first and then refreshes it in the background, so a change shows on the second open). If you add or rename files, add them to `ASSETS` in `sw.js` and bump `CACHE`.
 
+## Course rules file
+
+Subjects can hold their grading rules (tests, points to pass, grade scale, notes). They can be typed in on each subject page, or imported for several subjects at once in **Settings → Course rules** from a JSON file:
+
+```json
+{
+  "skipcount": "course-info",
+  "courses": [
+    {
+      "code": "PPY",
+      "type": "Exercises",
+      "passPoints": 50,
+      "bonusMax": 10,
+      "items": [
+        { "title": "Test", "max": 60, "min": 18, "classNo": 10, "note": "Retake in class 13 replaces the result" },
+        { "title": "Project", "max": 40, "date": "2026-06-05", "note": "Defended in the last two classes" }
+      ],
+      "scale": [
+        { "from": 50, "grade": "3.0" }, { "from": 66, "grade": "3.5" }, { "from": 74.5, "grade": "4.0" },
+        { "from": 83, "grade": "4.5" }, { "from": 91.5, "grade": "5.0" }
+      ],
+      "notes": "Anything else worth remembering"
+    }
+  ]
+}
+```
+
+- `code` matches the subject code from the timetable; `type` (optional) matches the class type in the subject name (e.g. `Exercises`). Without `type` the rules go to the subject(s) with that code whose attendance is checked.
+- `classNo` = "in the N-th class" — the date is taken from the timetable. Use `date` (YYYY-MM-DD) otherwise.
+- Points you already entered are kept when the rules are re-imported (matched by item title).
+
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | Shell and the two dialogs (subject, class record) |
+| `index.html` | Shell and dialogs (subject, class record, task, course rules, timetable import) |
 | `app.js` | State, stats, rendering, actions |
 | `ics.js` | `.ics` parser and timetable classification |
+| `course.js` | Course rules: points, pass status, grade, import format |
+| `motion.js` | Page transitions, sheet animations, edge swipes, tab indicator |
+| `update.js` | Service worker registration and "new version" banner |
 | `styles.css` | Styles, light and dark themes |
 | `sw.js` | Offline cache |
 | `manifest.webmanifest` | PWA metadata and icons |
