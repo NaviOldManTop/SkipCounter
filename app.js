@@ -440,7 +440,7 @@ function todayWidget() {
   if (!entries.length) {
     const upcoming = upcomingEvents((e) => e.date > iso || (isToday && e.date === iso))[0];
     const nextDay = upcoming ? `Next: <b>${esc(formatDate(upcoming.date))}</b>, ${hm(upcoming.start)} · ${dayEntries(upcoming.date).filter((x) => x.ev).length} classes` : 'No more classes in your timetable.';
-    body = `<p class="today-free">${isToday ? 'No classes today 🎉' : 'No classes'}</p><p class="today-next">${nextDay}</p>`;
+    body = `<p class="today-free">${isToday ? 'No classes today' : 'No classes'}</p><p class="today-next">${nextDay}</p>`;
   } else {
     body = `<ul class="entries">${entries.map((x) => entryRow(x, x === current ? 'now' : x === next ? 'next' : '')).join('')}</ul>`;
   }
@@ -617,8 +617,8 @@ function viewHome() {
       <p class="summary-date">${esc(dateLine)}</p>
       <p class="summary-headline">${headline.text}</p>
       <div class="tiles">
-        <div class="tile t-skip"><span class="tile-num">${totals.absent}</span><span class="tile-label">${plural(totals.absent, 'skip', 'skips')}</span></div>
-        <div class="tile t-excused"><span class="tile-num">${totals.excused}</span><span class="tile-label">excused</span></div>
+        <div class="tile t-skip ${totals.absent ? 'has' : ''}"><span class="tile-num">${totals.absent}</span><span class="tile-label">${plural(totals.absent, 'skip', 'skips')}</span></div>
+        <div class="tile t-excused ${totals.excused ? 'has' : ''}"><span class="tile-num">${totals.excused}</span><span class="tile-label">excused</span></div>
         <div class="tile t-present"><span class="tile-num">${overall}</span><span class="tile-label">attendance</span></div>
       </div>
       ${semesterBar()}
@@ -717,9 +717,9 @@ function viewSubject(subject) {
     </section>
 
     <section class="stats">
-      ${cell(st.present, 'attended', 's-present')}
-      ${cell(st.absent, 'skipped', 's-skip')}
-      ${cell(st.excused, 'excused', 's-excused')}
+      ${cell(st.present, 'attended')}
+      ${cell(st.absent, 'skipped', st.absent ? 's-skip has' : '')}
+      ${cell(st.excused, 'excused', st.excused ? 's-excused has' : '')}
       ${cell(st.attendance == null ? '—' : `${st.attendance}%`, 'attendance')}
       ${cell(st.remaining == null ? '—' : st.remaining, 'classes left')}
       ${cell(st.logged, 'logged')}
@@ -866,7 +866,7 @@ function viewCalendar() {
     : '';
 
   const dayList = dayEntries(cal.day, cal.filter);
-  const summaryItem = (n, label, cls) => `<span class="cal-stat ${cls}"><b>${n}</b> ${label}</span>`;
+  const summaryItem = (n, label, cls) => `<span class="cal-stat ${cls} ${n ? 'has' : ''}"><b>${n}</b> ${label}</span>`;
 
   return `
     <header class="topbar">
