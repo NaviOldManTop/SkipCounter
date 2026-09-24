@@ -1,8 +1,9 @@
 // SkipCount — attendance tracker. All data lives in localStorage on the device.
 import { parseICS, classifyEvent } from './ics.js';
+import { initUpdates } from './update.js';
 
 const STORAGE_KEY = 'skipcount:v1';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const COLORS = [
   '#5b5fef', '#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#1f9d63', '#84cc16', '#d99a00',
   '#f97316', '#e5484d', '#ec4899', '#c026d3', '#8b5cf6', '#a0703c', '#64748b',
@@ -348,9 +349,8 @@ function entryRow({ ev, rec }, marker = '') {
   let hint = '';
   if (subject && !subject.tracked) {
     hint = '<span class="entry-free">not checked</span>';
-  } else if (subject && !ev?.exam) {
-    const st = stats(subject);
-    if (st.left != null) hint = `<span class="entry-left lvl-${st.level}">${st.left < 0 ? `${-st.left} over` : `${st.left} ${plural(st.left, 'skip', 'skips')} left`}</span>`;
+  } else if (subject && !ev?.exam && !rec && !auto) {
+    hint = skipAdvice(stats(subject));
   }
 
   const color = ev?.exam ? 'var(--accent)' : subject?.color ?? 'var(--muted)';
@@ -365,6 +365,57 @@ function entryRow({ ev, rec }, marker = '') {
     </li>`;
 }
 
+// "Can I skip this one?" for a class that hasn't happened yet.
+function skipAdvice(st) {
+  if (st.left == null) return '';
+  if (st.left > 1) return `<span class="advice ok">Safe to skip · ${st.left} left</span>`;
+  if (st.left === 1) return '<span class="advice warn">Last skip left</span>';
+  if (st.left === 0) return '<span class="advice bad">No skips left</span>';
+  return `<span class="advice bad">Over by ${-st.left} — don't skip</span>`;
+}
+
+const DAY_MS = 864e5;
+const addDays = (iso, n) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return toISO(new Date(y, m - 1, d + n));
+};
+const mondayOf = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return addDays(iso, -((date.getDay() + 6) % 7));
+};
+
+// Selected day in the home week strip (null = today).
+const week = { day: null };
+
+function weekStrip(selected, today) {
+  const start = mondayOf(selected);
+  let days = '';
+  for (let i = 0; i < 7; i++) {
+    const iso = addDays(start, i);
+    const entries = dayEntries(iso).filter((x) => x.ev);
+    const [y, m, d] = iso.split('-').map(Number);
+    const label = new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'narrow' });
+    const marks = entries.slice(0, 4).map((x) => {
+      if (x.rec) return `status-${x.rec.status}`;
+      if (x.ev.exam) return 'exam';
+      return 'planned';
+    });
+    days += `
+      <button class="wk-day ${iso === selected ? 'is-selected' : ''} ${iso === today ? 'is-today' : ''} ${entries.length ? '' : 'is-empty'}" data-action="week-day" data-date="${iso}">
+        <span class="wk-label">${label}</span>
+        <span class="wk-num">${d}</span>
+        <span class="dots">${marks.map((c) => `<i class="d ${c}"></i>`).join('')}</span>
+      </button>`;
+  }
+  return `
+    <div class="wk">
+      <button class="wk-nav" data-action="week-shift" data-delta="-7" aria-label="Previous week">${icons.prev}</button>
+      <div class="wk-days">${days}</div>
+      <button class="wk-nav" data-action="week-shift" data-delta="7" aria-label="Next week">${icons.next}</button>
+    </div>`;
+}
+
 function todayWidget() {
   if (!state.events.length) {
     return `
@@ -376,18 +427,20 @@ function todayWidget() {
         <button class="btn primary" data-action="import-ics">${icons.upload}Import</button>
       </section>`;
   }
-  const iso = todayISO();
+  const today = todayISO();
+  const iso = week.day ?? today;
+  const isToday = iso === today;
   const entries = dayEntries(iso);
   const now = Date.now();
   const classes = entries.filter((x) => x.ev);
-  const current = classes.find((x) => x.ev.start <= now && x.ev.end > now);
-  const next = current ? null : classes.find((x) => x.ev.start > now);
+  const current = isToday ? classes.find((x) => x.ev.start <= now && x.ev.end > now) : null;
+  const next = isToday && !current ? classes.find((x) => x.ev.start > now) : null;
 
   let body;
   if (!entries.length) {
-    const upcoming = upcomingEvents(() => true)[0];
+    const upcoming = upcomingEvents((e) => e.date > iso || (isToday && e.date === iso))[0];
     const nextDay = upcoming ? `Next: <b>${esc(formatDate(upcoming.date))}</b>, ${hm(upcoming.start)} · ${dayEntries(upcoming.date).filter((x) => x.ev).length} classes` : 'No more classes in your timetable.';
-    body = `<p class="today-free">No classes today 🎉</p><p class="today-next">${nextDay}</p>`;
+    body = `<p class="today-free">${isToday ? 'No classes today 🎉' : 'No classes'}</p><p class="today-next">${nextDay}</p>`;
   } else {
     body = `<ul class="entries">${entries.map((x) => entryRow(x, x === current ? 'now' : x === next ? 'next' : '')).join('')}</ul>`;
   }
@@ -395,11 +448,76 @@ function todayWidget() {
   return `
     <section class="today">
       <header class="today-head">
-        <h2>Today</h2>
-        ${classes.length ? `<span class="today-count">${classes.length} ${plural(classes.length, 'class', 'classes')}</span>` : ''}
+        <h2>${isToday ? 'Today' : esc(longDate(iso))}</h2>
+        ${isToday ? '' : '<button class="link-btn" data-action="week-today">Today</button>'}
       </header>
+      ${weekStrip(iso, today)}
       ${body}
       ${classes.length ? '<p class="today-tip">Classes count as attended — tap only if you skip.</p>' : ''}
+    </section>`;
+}
+
+// Timetable classes split into terms wherever there's a gap of 4+ weeks.
+function semesterInfo() {
+  const classes = state.events.filter((e) => !e.exam).sort((a, b) => a.start - b.start);
+  if (!classes.length) return null;
+  const terms = [[classes[0]]];
+  for (let i = 1; i < classes.length; i++) {
+    if (classes[i].start - classes[i - 1].start > 28 * DAY_MS) terms.push([]);
+    terms.at(-1).push(classes[i]);
+  }
+  const now = Date.now();
+  const term = terms.find((t) => t.at(-1).end >= now) ?? terms.at(-1);
+  const firstDay = mondayOf(term[0].date);
+  const lastDay = mondayOf(term.at(-1).date);
+  const weeksBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / (7 * DAY_MS));
+  const totalWeeks = weeksBetween(firstDay, lastDay) + 1;
+  const done = term.filter((e) => e.end <= now).length;
+  return {
+    totalWeeks,
+    week: Math.min(totalWeeks, weeksBetween(firstDay, mondayOf(todayISO())) + 1),
+    done,
+    total: term.length,
+    pct: Math.round((done / term.length) * 100),
+    notStarted: now < term[0].start ? term[0] : null,
+    finished: now > term.at(-1).end,
+  };
+}
+
+function semesterBar() {
+  const s = semesterInfo();
+  if (!s) return '';
+  let label;
+  if (s.notStarted) label = `Semester starts ${esc(formatDate(s.notStarted.date))}`;
+  else if (s.finished) label = 'Semester finished';
+  else label = `Week ${s.week} of ${s.totalWeeks}`;
+  return `
+    <div class="term">
+      <div class="term-top"><span>${label}</span><span>${s.done}/${s.total} classes · ${s.pct}%</span></div>
+      <div class="term-bar"><span style="width:${s.pct}%"></span></div>
+    </div>`;
+}
+
+function examsCard() {
+  const exams = upcomingEvents((e) => e.exam).slice(0, 3);
+  if (!exams.length) return '';
+  const inDays = (ev) => {
+    const days = Math.round((new Date(ev.date) - new Date(todayISO())) / DAY_MS);
+    return days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+  };
+  return `
+    <section class="exams">
+      <h2 class="section-title">Upcoming exams</h2>
+      <ul class="exam-list">
+        ${exams.map((ev) => `
+          <li class="exam-item">
+            <span class="exam-when"><b>${inDays(ev)}</b><small>${esc(formatDate(ev.date))}, ${hm(ev.start)}</small></span>
+            <span class="exam-body">
+              <span class="exam-title">${esc(ev.code)} exam</span>
+              <span class="exam-meta">${[ev.room && `${icons.pin}${esc(ev.room)}`, esc(ev.teacher)].filter(Boolean).join('<span class="sep">·</span>')}</span>
+            </span>
+          </li>`).join('')}
+      </ul>
     </section>`;
 }
 
@@ -503,8 +621,10 @@ function viewHome() {
         <div class="tile t-excused"><span class="tile-num">${totals.excused}</span><span class="tile-label">excused</span></div>
         <div class="tile t-present"><span class="tile-num">${overall}</span><span class="tile-label">attendance</span></div>
       </div>
+      ${semesterBar()}
     </section>
     ${todayWidget()}
+    ${examsCard()}
     ${tracked.length ? `<h2 class="section-title">Subjects</h2>
     <section class="list">${tracked.map(subjectCard).join('')}</section>` : ''}
     ${free.length ? `<h2 class="section-title">Not checked <span class="title-note">· skips don't count</span></h2>
@@ -1267,6 +1387,20 @@ document.addEventListener('click', (e) => {
       cal.day = el.dataset.date;
       render();
       break;
+    case 'week-day':
+      week.day = el.dataset.date === todayISO() ? null : el.dataset.date;
+      render();
+      break;
+    case 'week-shift': {
+      const target = addDays(week.day ?? todayISO(), Number(el.dataset.delta));
+      week.day = mondayOf(target) === mondayOf(todayISO()) ? null : mondayOf(target);
+      render();
+      break;
+    }
+    case 'week-today':
+      week.day = null;
+      render();
+      break;
     case 'cal-month':
       cal.month = shiftMonth(cal.month, Number(el.dataset.delta));
       render();
@@ -1345,8 +1479,6 @@ document.addEventListener('visibilitychange', () => {
 applyTheme();
 render();
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW registration failed', err));
-}
+initUpdates();
 // Ask the browser not to evict our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});

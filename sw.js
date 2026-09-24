@@ -1,12 +1,13 @@
 // Offline support: serve from cache instantly, refresh the cache in the background.
 // Bump CACHE when the asset list changes.
-const CACHE = 'skipcount-v6';
+const CACHE = 'skipcount-v7';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './ics.js',
+  './update.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -15,7 +16,10 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+  // cache: 'reload' bypasses the HTTP cache (GitHub Pages sends max-age=600).
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' })))),
+  );
   self.skipWaiting();
 });
 
@@ -35,7 +39,8 @@ self.addEventListener('fetch', (event) => {
     caches.open(CACHE).then(async (cache) => {
       const key = request.mode === 'navigate' ? './index.html' : request;
       const cached = await cache.match(key, { ignoreSearch: true });
-      const network = fetch(request)
+      // no-cache: revalidate with the server so a stale HTTP-cached copy can't overwrite a fresh one.
+      const network = fetch(request, { cache: 'no-cache' })
         .then((response) => {
           if (response.ok) cache.put(key, response.clone());
           return response;

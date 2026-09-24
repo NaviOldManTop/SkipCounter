@@ -939,6 +939,57 @@ svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; s
 .import-name em { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-style: normal; }
 .import-meta { color: var(--muted); font-size: 12.5px; }
 
+/* ---------- week strip, skip advice, semester, exams ---------- */
+
+.today-head .link-btn { padding: 0; }
+.wk { display: flex; align-items: center; gap: 2px; margin: 2px -6px 8px; }
+.wk-nav { display: grid; place-items: center; width: 26px; height: 52px; flex: none; padding: 0; border: 0; background: none; color: var(--muted); }
+.wk-nav svg { width: 18px; height: 18px; }
+.wk-days { display: grid; flex: 1; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.wk-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 58px;
+  padding: 5px 0 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
+}
+.wk-label { color: var(--muted); font-size: 11px; font-weight: 650; }
+.wk-num { display: grid; place-items: center; width: 28px; height: 24px; border-radius: 8px; font-size: 15px; font-weight: 650; }
+.wk-day.is-empty .wk-num { color: var(--muted); font-weight: 500; }
+.wk-day.is-today .wk-num { color: var(--accent); font-weight: 800; }
+.wk-day.is-selected { background: var(--accent-soft); }
+.wk-day.is-selected .wk-num { background: var(--accent); color: #fff; }
+.wk-day .dots { gap: 2px; }
+.wk-day .d { width: 5px; height: 5px; }
+
+.advice { font-weight: 650; }
+.advice.ok { color: var(--ok); }
+.advice.warn { color: var(--warn); }
+.advice.bad { color: var(--bad); }
+
+.term { margin-top: 14px; }
+.term-top { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.term-top span:first-child { color: var(--text); }
+.term-bar { height: 6px; margin-top: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
+.term-bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+
+.exam-list { margin: 0; padding: 2px 14px; list-style: none; border-radius: var(--radius); background: linear-gradient(135deg, var(--accent-soft), var(--surface) 70%); box-shadow: var(--shadow); }
+.exam-item { display: flex; align-items: center; gap: 14px; padding: 11px 0; }
+.exam-item + .exam-item { border-top: 1px solid var(--border); }
+.exam-when { display: flex; flex-direction: column; width: 92px; flex: none; }
+.exam-when b { color: var(--accent); font-size: 15px; }
+.exam-when small { color: var(--muted); font-size: 12px; }
+.exam-body { display: flex; flex-direction: column; min-width: 0; }
+.exam-title { font-weight: 650; }
+.exam-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; color: var(--muted); font-size: 12.5px; }
+.exam-meta svg { width: 13px; height: 13px; }
+.exam-meta .sep { opacity: 0.5; }
+
 /* ---------- attended by default / not-checked subjects ---------- */
 
 .card-actions.two { grid-template-columns: repeat(2, 1fr); }
@@ -984,6 +1035,37 @@ svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; s
 .toggle-row input:checked + .toggle::after { transform: translateX(20px); }
 .toggle-row input:focus-visible + .toggle { outline: 2px solid var(--accent); outline-offset: 2px; }
 .limit-fields { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------- update banner ---------- */
+
+#update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100% - 32px);
+  padding: 10px 10px 10px 16px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  transform: translateX(-50%);
+}
+#update-banner button {
+  flex: none;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.2);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
