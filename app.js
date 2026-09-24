@@ -1,6 +1,7 @@
 // SkipCount — attendance tracker. All data lives in localStorage on the device.
 import { parseICS, classifyEvent } from './ics.js';
 import { initUpdates } from './update.js';
+import { playEnter, fadeIn, initSwipeNav } from './motion.js';
 
 const STORAGE_KEY = 'skipcount:v1';
 const APP_VERSION = '1.4.0';
@@ -355,7 +356,7 @@ function entryRow({ ev, rec }, marker = '') {
 
   const color = ev?.exam ? 'var(--accent)' : subject?.color ?? 'var(--muted)';
   return `
-    <li class="entry ${marker ? `is-${marker}` : ''} ${rec ? 'is-logged' : ''} ${subject && !subject.tracked ? 'is-free' : ''}" style="--c:${color}">
+    <li class="entry ${marker ? `is-${marker}` : ''} ${rec ? 'is-logged' : ''} ${rec && rec.id === flash?.recordId ? 'just-logged' : ''} ${subject && !subject.tracked ? 'is-free' : ''}" style="--c:${color}">
       ${time}
       <div class="entry-body">
         <div class="entry-title">${marker ? `<span class="entry-marker">${marker === 'now' ? 'Now' : 'Next'}</span>` : ''}<span>${title}</span></div>
@@ -452,7 +453,7 @@ function todayWidget() {
         ${isToday ? '' : '<button class="link-btn" data-action="week-today">Today</button>'}
       </header>
       ${weekStrip(iso, today)}
-      ${body}
+      <div class="today-body">${body}</div>
       ${classes.length ? '<p class="today-tip">Classes count as attended — tap only if you skip.</p>' : ''}
     </section>`;
 }
@@ -540,7 +541,7 @@ function subjectCard(subject) {
             <p class="meta">${att}${todayChip}</p>
           </div>
           <div class="count">
-            <span class="count-num">${big.num}</span>
+            <span class="count-num ${flash?.subjectId === subject.id ? 'bump' : ''}">${big.num}</span>
             <span class="count-label">${big.label}</span>
           </div>
         </div>
@@ -695,7 +696,7 @@ function viewSubject(subject) {
 
   const heroCount = (big, kind, level) => `
     <div class="hero-count lvl-${level} kind-${kind}">
-      <span class="hero-num">${big.num}</span>
+      <span class="hero-num ${flash?.subjectId === subject.id ? 'bump' : ''}">${big.num}</span>
       <span class="hero-label">${big.label}</span>
     </div>`;
 
@@ -889,7 +890,7 @@ function viewCalendar() {
       </div>
     </section>
 
-    <section>
+    <section class="day-list">
       <h2 class="section-title">${esc(longDate(cal.day))}</h2>
       ${dayList.length
         ? `<ul class="entries boxed">${dayList.map((x) => entryRow(x)).join('')}</ul>`
@@ -942,13 +943,18 @@ function toast(message, undo) {
 
 // ---------- actions ----------
 
+// What was just logged, so the next render can animate it once.
+let flash = null;
+
 function logClass(subjectId, status, date = todayISO(), note = '', eventUid = null) {
   const subject = getSubject(subjectId);
   if (!subject) return;
   const record = { id: uid(), subjectId, date, status, note, at: Date.now(), ...(eventUid ? { eventUid } : {}) };
   state.records.push(record);
   save();
+  flash = { recordId: record.id, subjectId };
   render();
+  flash = null;
   const st = stats(subject);
   let msg = `${STATUS[status].verb} · ${subject.name}`;
   if (status === 'absent' && st.left != null) {
@@ -1386,20 +1392,25 @@ document.addEventListener('click', (e) => {
     case 'cal-day':
       cal.day = el.dataset.date;
       render();
+      fadeIn($('.day-list'));
       break;
     case 'week-day':
       week.day = el.dataset.date === todayISO() ? null : el.dataset.date;
       render();
+      fadeIn($('.today-body'));
       break;
     case 'week-shift': {
       const target = addDays(week.day ?? todayISO(), Number(el.dataset.delta));
       week.day = mondayOf(target) === mondayOf(todayISO()) ? null : mondayOf(target);
       render();
+      fadeIn($('.wk-days'));
+      fadeIn($('.today-body'));
       break;
     }
     case 'week-today':
       week.day = null;
       render();
+      fadeIn($('.today-body'));
       break;
     case 'cal-month':
       cal.month = shiftMonth(cal.month, Number(el.dataset.delta));
@@ -1461,12 +1472,15 @@ document.addEventListener('click', (e) => {
   }
 });
 
+let lastHash = location.hash;
 window.addEventListener('hashchange', () => {
   subjectDialog.close();
   recordDialog.close();
   importDialog.close();
   render();
   window.scrollTo(0, 0);
+  playEnter($('#app'), lastHash, location.hash);
+  lastHash = location.hash;
 });
 
 // Re-render when the app comes back to the foreground on a new day
@@ -1480,5 +1494,6 @@ applyTheme();
 render();
 
 initUpdates();
+initSwipeNav($('#app'));
 // Ask the browser not to evict our data under storage pressure.
 navigator.storage?.persist?.().catch(() => {});

@@ -1054,6 +1054,28 @@ svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; s
   font-weight: 700;
 }
 
+/* ---------- motion ---------- */
+/* Short and small: a few pixels of travel, ~200ms, no bounce on whole screens. */
+
+@keyframes view-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes view-in-r { from { opacity: 0.4; transform: translateX(22px); } }
+@keyframes view-in-l { from { opacity: 0.4; transform: translateX(-22px); } }
+@keyframes fade-in { from { opacity: 0; transform: translateY(3px); } }
+@keyframes pop { 0% { transform: scale(0.8); opacity: 0.3; } 70% { transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes bump { 40% { transform: scale(1.1); } }
+
+#app.enter { animation: view-in 0.2s ease-out; }
+#app.enter-r { animation: view-in-r 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+#app.enter-l { animation: view-in-l 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.fade-in { animation: fade-in 0.18s ease-out; }
+.entry.just-logged .chip { animation: pop 0.28s ease-out; }
+.count-num.bump, .hero-num.bump { display: inline-block; animation: bump 0.3s ease-out; }
+.sheet::backdrop { animation: fade-in 0.2s ease-out; }
+.tabbar a svg { transition: transform 0.15s ease; }
+.tabbar a:active svg { transform: scale(0.9); }
+.card-main, .history-row, .free-row, .filter-chip, .mini { transition: background-color 0.15s ease, transform 0.1s ease; }
+.mini:active, .filter-chip:active { transform: scale(0.94); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
