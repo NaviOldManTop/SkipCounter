@@ -702,8 +702,12 @@ function dayDots(entries) {
     if (isTracked(x.ev.subjectId) && isAutoAttended(x)) return 'status-present auto';
     return 'planned';
   });
-  const shown = dots.slice(0, 4).map((cls) => `<i class="d ${cls}"></i>`).join('');
-  return shown + (dots.length > 4 ? '<i class="d more"></i>' : '');
+  // One row of at most 4 marks; skips, excused and exams go first so they never get hidden.
+  const rank = (cls) => ['status-absent', 'status-excused', 'exam'].findIndex((c) => cls.startsWith(c)) >>> 0;
+  dots.sort((a, b) => rank(a) - rank(b));
+  const fits = dots.length <= 4;
+  const shown = dots.slice(0, fits ? 4 : 3).map((cls) => `<i class="d ${cls}"></i>`).join('');
+  return shown + (fits ? '' : '<i class="d more"></i>');
 }
 
 function viewCalendar() {
