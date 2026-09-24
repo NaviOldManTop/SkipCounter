@@ -731,9 +731,9 @@ function viewCalendar() {
     }
     const cls = [
       'cal-cell',
-      iso === today ? 'today' : '',
-      iso === cal.day ? 'selected' : '',
-      iso > today ? 'future' : '',
+      iso === today ? 'is-today' : '',
+      iso === cal.day ? 'is-selected' : '',
+      iso > today ? 'is-future' : '',
     ].join(' ');
     cells += `<button class="${cls}" data-action="cal-day" data-date="${iso}">
         <span class="cal-num">${d}</span><span class="dots">${dayDots(entries)}</span>

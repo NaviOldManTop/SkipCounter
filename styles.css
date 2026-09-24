@@ -621,11 +621,20 @@ svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; s
   font-size: 14px;
   font-weight: 500;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
-  transform: translate(-50%, 140%);
-  transition: transform 0.25s ease;
+  /* Sits above the tab bar, so hide it by fading out rather than sliding off-screen. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 16px);
+  transition: transform 0.25s ease, opacity 0.2s ease, visibility 0s linear 0.25s;
   pointer-events: none;
 }
-.toast.show { transform: translate(-50%, 0); pointer-events: auto; }
+.toast.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition: transform 0.25s ease, opacity 0.2s ease, visibility 0s;
+  pointer-events: auto;
+}
 .toast button {
   flex: none;
   padding: 6px 10px;
@@ -874,11 +883,11 @@ svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; s
   font-weight: 600;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.cal-cell.future .cal-num { color: var(--muted); }
-.cal-cell.today .cal-num { color: var(--accent); font-weight: 800; box-shadow: inset 0 0 0 2px var(--accent); }
-.cal-cell.selected .cal-num { background: var(--accent); color: #fff; font-weight: 750; box-shadow: none; }
+.cal-cell.is-future .cal-num { color: var(--muted); }
+.cal-cell.is-today .cal-num { color: var(--accent); font-weight: 800; box-shadow: inset 0 0 0 2px var(--accent); }
+.cal-cell.is-selected .cal-num { background: var(--accent); color: #fff; font-weight: 750; box-shadow: none; }
 .cal-cell:active .cal-num { background: var(--surface-2); }
-.cal-cell.selected:active .cal-num { background: var(--accent); }
+.cal-cell.is-selected:active .cal-num { background: var(--accent); }
 .dots { display: flex; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 3px; height: 6px; }
 .d { flex: none; width: 6px; height: 6px; border-radius: 50%; }
 .d.status-present { background: var(--ok); }
